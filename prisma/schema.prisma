@@ -1,0 +1,225 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  PROVIDER_ADMIN
+  STORE_OWNER
+  MANAGER
+  CASHIER
+}
+
+enum BillingStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+}
+
+enum StockMovementType {
+  RECEIVE
+  ADJUST
+  SALE
+}
+
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  billingStatus BillingStatus @default(PENDING)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  stores Store[]
+  users  User[]
+}
+
+model User {
+  id        String   @id @default(cuid())
+  tenantId  String
+  email     String   @unique
+  name      String?
+  passwordHash String @default("")
+  role      Role     @default(STORE_OWNER)
+  storeId   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  store Store? @relation(fields: [storeId], references: [id], onDelete: SetNull)
+
+  sessions Session[]
+
+  sales Sale[]
+
+  stockCountSessions StockCountSession[]
+}
+
+model Store {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  billingStatus BillingStatus @default(PENDING)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  products Product[]
+  users    User[]
+
+  sales Sale[]
+
+  stockMovements StockMovement[]
+
+  stockCountSessions StockCountSession[]
+
+  activeSessions Session[] @relation("ActiveStoreSessions")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  activeStoreId String?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  activeStore Store? @relation("ActiveStoreSessions", fields: [activeStoreId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([activeStoreId])
+  @@index([expiresAt])
+}
+
+model Product {
+  id        String   @id @default(cuid())
+  storeId   String
+  name      String
+  sku       String?
+  barcode   String?
+  priceCents Int     @default(0)
+  reorderLevel Int   @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  saleItems SaleItem[]
+
+  stockMovements StockMovement[]
+
+  stockCountLines StockCountLine[]
+
+  @@index([storeId])
+  @@unique([storeId, sku])
+  @@unique([storeId, barcode])
+}
+
+model Sale {
+  id           String   @id @default(cuid())
+  storeId      String
+  userId       String
+  subtotalCents Int     @default(0)
+  taxCents      Int     @default(0)
+  totalCents    Int     @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items SaleItem[]
+
+  stockMovements StockMovement[]
+
+  @@index([storeId])
+  @@index([createdAt])
+}
+
+model StockMovement {
+  id            String   @id @default(cuid())
+  storeId       String
+  productId     String
+  type          StockMovementType
+  quantityDelta Int
+  saleId        String?
+  stockCountSessionId String?
+  note          String?
+  reference     String?
+  createdAt     DateTime @default(now())
+
+  store   Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sale    Sale?   @relation(fields: [saleId], references: [id], onDelete: SetNull)
+
+  stockCountSession StockCountSession? @relation(fields: [stockCountSessionId], references: [id], onDelete: SetNull)
+
+  @@index([storeId])
+  @@index([productId])
+  @@index([stockCountSessionId])
+  @@index([createdAt])
+}
+
+model SaleItem {
+  id             String   @id @default(cuid())
+  saleId         String
+  productId      String
+  quantity       Int
+  unitPriceCents Int
+  lineTotalCents Int
+  createdAt      DateTime @default(now())
+
+  sale    Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([saleId])
+  @@index([productId])
+}
+
+enum StockCountStatus {
+  OPEN
+  FINALIZED
+}
+
+model StockCountSession {
+  id              String   @id @default(cuid())
+  storeId          String
+  createdByUserId  String
+  status           StockCountStatus @default(OPEN)
+  note             String?
+  reference        String?
+  createdAt        DateTime @default(now())
+  finalizedAt      DateTime?
+
+  store      Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  createdBy  User  @relation(fields: [createdByUserId], references: [id], onDelete: Cascade)
+
+  lines      StockCountLine[]
+  movements  StockMovement[]
+
+  @@index([storeId])
+  @@index([createdAt])
+  @@index([status])
+}
+
+model StockCountLine {
+  id         String   @id @default(cuid())
+  sessionId  String
+  productId  String
+  countedQty Int
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  session  StockCountSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  product  Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, productId])
+  @@index([sessionId])
+  @@index([productId])
+}
